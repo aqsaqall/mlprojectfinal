@@ -1,5 +1,3 @@
-# mlprojectfinal
-
 #### To run the train command type the following command
 ```
 poetry run train
