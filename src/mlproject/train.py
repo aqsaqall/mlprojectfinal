@@ -3,10 +3,10 @@ import joblib
 import click
 import mlflow
 import mlflow.sklearn
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 
 from .data import get_dataset
-from .pipeline import create_pipeline
+from .pipeline import create_pipeline_LogReg, create_pipeline_RandomForest
 
 @click.command()
 @click.option(
@@ -53,6 +53,24 @@ from .pipeline import create_pipeline
     type=float,
     show_default=True,
 )
+@click.option(
+    "--n-estimators",
+    default=100,
+    type=int,
+    show_default=True,
+)
+@click.option(
+    "--criterion",
+    default="gini",
+    type=str,
+    show_default=True,
+)
+@click.option(
+    "--mode-type",
+    default="LogisticRegression",
+    type=str,
+    show_default=True,
+)
 def train(
     dataset_path: Path,
     save_model_path: Path,
@@ -61,6 +79,9 @@ def train(
     use_scaler: bool,
     max_iter: int,
     logreg_c: float,
+    n_estimators: int,
+    criterion: str,
+    model_type: str
 ) -> None:
     features_train, features_val, target_train, target_val = get_dataset(
         dataset_path,
@@ -68,13 +89,25 @@ def train(
         test_split_ratio,
     )
     with mlflow.start_run():
-        pipeline = create_pipeline(use_scaler, max_iter, logreg_c, random_state)
+        if model_type=="LogisticRegression": pipeline = create_pipeline_LogReg(use_scaler, max_iter, logreg_c, random_state)
+        else: pipeline = create_pipeline_RandomForest(use_scaler, n_estimators, criterion, random_state)
         pipeline.fit(features_train, target_train)
         accuracy = accuracy_score(target_val, pipeline.predict(features_val))
+        f1 = f1_score(target_val, pipeline.predict(features_val))
+        roc_auc = roc_auc_score(target_val, pipeline.predict(features_val))
+        mlflow.log_param("model_type", model_type)
         mlflow.log_param("use_scaler", use_scaler)
-        mlflow.log_param("max_iter", max_iter)
-        mlflow.log_param("logreg_c", logreg_c)
+        if model_type=="LogisticRegression":
+            mlflow.log_param("max_iter", max_iter)
+            mlflow.log_param("logreg_c", logreg_c)
+        else:
+            mlflow.log_param("n_estimators", n_estimators)
+            mlflow.log_param("criterion", criterion)
         mlflow.log_metric("accuracy", accuracy)
         click.echo(f"Accuracy: {accuracy}.")
+        mlflow.log_metric("f1_score", f1)
+        click.echo(f"F1-score: {f1}")
+        mlflow.log_metric("ROCAUC_score", roc_auc)
+        click.echo(f"ROCAUC score: {roc_auc}")
         joblib.dump(pipeline, save_model_path)
         click.echo(f"Model is saved to {save_model_path}.")
