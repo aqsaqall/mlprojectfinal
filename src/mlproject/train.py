@@ -3,10 +3,13 @@ import joblib
 import click
 import mlflow
 import mlflow.sklearn
-from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+from sklearn.metrics import accuracy_score, f1_score, log_loss
+from sklearn.model_selection import StratifiedKFold
 
 from .data import get_dataset
 from .pipeline import create_pipeline_LogReg, create_pipeline_RandomForest
+
+import numpy as np
 
 @click.command()
 @click.option(
@@ -43,7 +46,7 @@ from .pipeline import create_pipeline_LogReg, create_pipeline_RandomForest
 )
 @click.option(
     "--max-iter",
-    default=100,
+    default=500,
     type=int,
     show_default=True,
 )
@@ -66,7 +69,7 @@ from .pipeline import create_pipeline_LogReg, create_pipeline_RandomForest
     show_default=True,
 )
 @click.option(
-    "--mode-type",
+    "--model-type",
     default="LogisticRegression",
     type=str,
     show_default=True,
@@ -83,7 +86,7 @@ def train(
     criterion: str,
     model_type: str
 ) -> None:
-    features_train, features_val, target_train, target_val = get_dataset(
+    data_features, data_target = get_dataset(
         dataset_path,
         random_state,
         test_split_ratio,
@@ -91,10 +94,17 @@ def train(
     with mlflow.start_run():
         if model_type=="LogisticRegression": pipeline = create_pipeline_LogReg(use_scaler, max_iter, logreg_c, random_state)
         else: pipeline = create_pipeline_RandomForest(use_scaler, n_estimators, criterion, random_state)
-        pipeline.fit(features_train, target_train)
-        accuracy = accuracy_score(target_val, pipeline.predict(features_val))
-        f1 = f1_score(target_val, pipeline.predict(features_val))
-        roc_auc = roc_auc_score(target_val, pipeline.predict(features_val))
+        cv = StratifiedKFold(n_splits=5, random_state=random_state, shuffle=True)
+        accuracy_list, f1_list, rocauc_list = [], [], []
+        for (train, test), i in zip(cv.split(data_features, data_target), range(5)):
+            pipeline.fit(data_features.iloc[train], data_target.iloc[train])
+            accuracy_list.append(accuracy_score(data_target.iloc[test], pipeline.predict(data_features.iloc[test])))
+            f1_list.append(f1_score(data_target.iloc[test], pipeline.predict(data_features.iloc[test]), average='macro'))
+            #accuracy_list.append(accuracy_score(data_target.iloc[test], pipeline.predict(data_features.iloc[test])))
+        pipeline.fit(data_features, data_target)
+        accuracy = np.mean(accuracy_list)
+        f1 = np.mean(f1_list)
+        #loss = log_loss(target_val, pipeline.predict(features_val))
         mlflow.log_param("model_type", model_type)
         mlflow.log_param("use_scaler", use_scaler)
         if model_type=="LogisticRegression":
@@ -107,7 +117,7 @@ def train(
         click.echo(f"Accuracy: {accuracy}.")
         mlflow.log_metric("f1_score", f1)
         click.echo(f"F1-score: {f1}")
-        mlflow.log_metric("ROCAUC_score", roc_auc)
-        click.echo(f"ROCAUC score: {roc_auc}")
+        #mlflow.log_metric("Log_loss", loss)
+        #click.echo(f"Log_loss: {loss}")
         joblib.dump(pipeline, save_model_path)
         click.echo(f"Model is saved to {save_model_path}.")
